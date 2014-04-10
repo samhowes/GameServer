@@ -8,6 +8,7 @@ var ERRUserNameOrDeviceAlreadyTaken = 2;
 var ERRInvalidPostParameter = 3;
 var ERRCookieIDMismatch = 4;
 var ERRSessionExists = 5;
+var ERRInvalidClientID = 6; 
 
 // returns [statusCode, Error JSON Object]
 function NWError(code) {
@@ -40,6 +41,11 @@ function NWError(code) {
 			description = "A session with that name already exists. Choose a different name.";
 			statusCode = 400;
 			break;
+			
+		case ERRInvalidClientID:
+			description = "The clientID is not part of the Database";
+			statusCode = 401;
+			break;
 
 		default:
 			description = "Unknown server error";
@@ -64,7 +70,8 @@ var kGameSessionObjectKeys = {
 	"name": "sessionName",
 	"id": "id",
 	"activeSessions": "activeSessions",
-	"currentPlayers": "currentPlayers"
+	"currentPlayers": "currentPlayers", 
+	"currentSession": "currentSession"
 };
 
 /* Used for creating a game session to store in the database */
@@ -81,24 +88,46 @@ function DBGameSession(name, sessionID, clientID) {
 	return value;
 }
 
-function _CurrentPlayer(name, deviceID)
+//CurrentPlayer function takes in the clientID and returns data related to the client 
+function _CurrentPlayer(clientID)
 {
-	return {
-		"name": name, 
-		"deviceID": deviceID, 
-		"imageURL": kGameServerEndpoints.images.replace(":clientID", "1234567890")
-	};
+	var value; 
+	db.users.findOne({clientID: clientID}, function(err, user) 
+	{
+		try
+		{		
+			//if user is null meaning no user was found on the db, then throw error
+			if (err != null || user == null)
+			{          
+				throw NWError(ERRInvalidClientID);
+			}
+			value = {
+				"name": user.userName, 
+				"deviceID": user.deviceID, 
+				"imageURL": user.imageURL
+			};
+		} 
+		catch (err)
+		{
+			HandleCaughtError(res, err);
+		}
+	});
+	console.log(value);
 }
 
 /* Used for populating the "currentPlayers" array */
 // TODO
 function NWCurrentPlayers(currentClientIDsArray)
 {
-	return [
-		_CurrentPlayer("Jeannie", "33"),
-		_CurrentPlayer("Livy", "44"),
-		_CurrentPlayer("Koki", "55")
-	];
+	var result = []; 
+	var temp; //stores the data temporary 
+	var arrayLength = currentClientIDsArray.length;
+	
+	//for loop the array and push the info to result array 
+	for (var i = 0; i < arrayLength; i++) {
+		result.push(_CurrentPlayer(currentClientIDsArray[i])); 
+	}
+	return result;
 }
 
 /* "NetWork Game Session" Used for Providing game session information to a client 
@@ -176,7 +205,7 @@ function NWValidateClientID(clientID)
 
 function NWValidateSessionID(sessionID)
 {
-	if(sessionID == null || !(sessionID instanceof String) || sessionID.length <= 0 || sessionID.length > 5)
+	if(sessionID == null || !(typeof(sessionID) == 'string') || sessionID.length <= 0 || sessionID.length > 5)
 	{
 		console.log("Error Invalid sessionID specified");
 		throw NWError(ERRInvalidPostParameter);
@@ -252,10 +281,25 @@ app.post(kGameServerEndpoints.login, function(req, res)
 		{
 			// Check if the user is already in the database
 			db.users.findOne({userName: userName, deviceID: deviceID}, function(err, users) 
-			{
+			{	
 				//TODO: Koki check if the device id is present
-				try
+				db.users.count({deviceID: deviceID}, function(err, numberOfDeviceID) 
 				{
+					try
+					{		
+						if (numberOfDeviceID != 0)
+						{     
+							throw NWError(ERRUserNameOrDeviceAlreadyTaken);
+						}	
+					}
+					catch (err)
+					{
+						HandleCaughtError(res, err);
+					}
+				});
+				
+				try
+				{	
 					// We didn't find a user, so add a new one
 					if (err != null || users != null)
 					{          
@@ -393,21 +437,37 @@ app.post(kGameServerEndpoints.createSession, function(req, res)
 		//begin validation before putting onto database
 		newSessionName = req.body.newSessionName;
 		clientID = parseInt(req.cookies.clientID);
-
+	
 		console.log("clientID: '" + clientID + "' sessionName Requested: '" + newSessionName + "'");
 
 		NWValidateClientID(clientID);
 		//find the user using their username and deviceID 
-		if (newSessionName == null || !(newSessionName instanceof String) || newSessionName.length == 0 || newSessionName.length > 15) 
+		/****bug with instanceOf it detects all strings as errors****/
+		if (newSessionName == null || !(typeof(newSessionName) == 'string') || newSessionName.length == 0 || newSessionName.length > 15) 
 		{
 			console.log("Error Invalid session name");
 			throw NWError(ERRInvalidPostParameter);
 		}	
-
-		//TODO: KOKI query Database for clientID
-
-
-		db.sessions.findOne({name: newSessionName}, function(err, sessions) 
+		
+		//TODO: KOKI query Database for clientID, checking to see clientID exists in database 
+		db.users.findOne({clientID: clientID}, function(err, user) 
+		{
+			try
+			{		
+				//if user is null meaning no user was found on the db, then throw error
+				if (err != null || user == null)
+				{          
+					throw NWError(ERRInvalidClientID);
+				}	
+			}
+			catch (err)
+			{
+				HandleCaughtError(res, err);
+			}
+		});
+		
+		/****bug with name and must change to sessionName or just continues creating the same sessionName over and over****/
+		db.sessions.findOne({sessionName: newSessionName}, function(err, sessions) 
 		{
 			try 
 			{
@@ -468,8 +528,7 @@ app.post(kGameServerEndpoints.createSession, function(req, res)
 				HandleCaughtError(res, err);
 			}		
 		});
-
-		//res.send(200, "");
+		
 	} 
 	catch (err)
 	{
@@ -495,7 +554,6 @@ app.post(kGameServerEndpoints.joinSession, function(req, res) {
 	var clientID = ""; 		//is a number(int), pass to db as string
 	
 	// Get the client cookie ID 
-	
 	try
 	{
 		clientID = parseInt(req.cookies.clientID, 10);
@@ -503,30 +561,70 @@ app.post(kGameServerEndpoints.joinSession, function(req, res) {
 		
 		NWValidateSessionID(sessionID);
 		NWValidateClientID(clientID);	// Throws an exception if invalid
+		
+		sessionID = parseInt(sessionID, 10); //change it to int for searching purposes
 //BOOKMARK
 		
 		// Find the session the client wants to join 
-		db.sessions.findOne({sessionID: req.body.sessionID}, function (err, session) 
+		db.sessions.findOne({sessionID: sessionID}, function (err, session) 
 		{
-			console.log(session); 
-
 			// adding the user to the currentPlayers array 
-			session.currentPlayers.push({clientID: putClientID});
-
-			db.sessions.update({name: req.body.sessionName}, 
-					{$set:{currentPlayers: session.currentPlayers}}, function(err, result) 
-			{
-				if (err) return console.error(err);
-			});
+			session.currentPlayers.push(clientID);
 			
+			//updating database with current players 
+			db.sessions.update({sessionID: sessionID}, 
+				{$set:{currentPlayers: session.currentPlayers}}, function(err, result){
+				try 
+				{
+					if(err) 
+					{
+						throw NWError(ERRUnknownServerError);
+					}
+				}
+				catch (err)
+				{
+					HandleCaughtError(res, err);
+				}
+			});
+			//updating database with number of players 
+			db.sessions.update({sessionID: sessionID}, 
+				{$set:{numberOfPlayers: session.numberOfPlayers + 1}}, function(err, result){
+				try 
+				{
+					if(err) 
+					{
+						throw NWError(ERRUnknownServerError);
+					}
+				}
+				catch (err)
+				{
+					HandleCaughtError(res, err);
+				}
+			});
 			//setting the currentsession in user to the sessionID 
 			db.users.update(
-				{clientID: putClientID},
+				{clientID: clientID},
 				{$set:{currentSession: req.body.sessionID}}, function(err, result) {
+				try 
+				{
+					if(err) 
+					{
+						throw NWError(ERRUnknownServerError);
+					}
+				}
+				catch (err)
+				{
+					HandleCaughtError(res, err);
+				}
 			});
 
 			//TODO: Get all players in the current session and return them to the user. 
+			var currentPlayers = session.currentPlayers; 
+		
+			var message = {}
+			message[kGameSessionObjectKeys.currentPlayers] = currentPlayers;
 
+			res.json(200, message);
 		});
 	}
 	catch (err)
@@ -541,27 +639,53 @@ app.get(kGameServerEndpoints.getID, function(req, res)
 	console.log("Got a current game session query!");
 	var clientID = "";
 	//get the client cookie ID and converting it to integer 
-	var putClientID = parseInt(req.cookies.clientID, 10);
-	if(clientID == null || typeof clientID == "undefined" || clientID.length <= 0 || clientID >10 || clientID == "")
-	{
-		console.log("error");
-		message = "That is an invalid client ID. Please try again"
-		res.json(400, message);
-	}else
-	{
+	var clientID = parseInt(req.cookies.clientID, 10);
+
+	NWValidateClientID(clientID);	// Throws an exception if invalid
+
 	//querying for the session info, the user is currently in  
-	db.users.findOne({clientID: putClientID}, function (err, user) {
-			
+	db.users.findOne({clientID: clientID}, function (err, user) {	
 		//now querying to the session database
-		db.sessions.findOne({sessionID: user.currentSession}, function (err, session) 
+		db.sessions.findOne({sessionID: parseInt(user.currentSession, 10)}, function (err, session) 
 		{
-			console.log(session);
 			// TODO: Query the database and get info for every user in the session
 			// TODO: Return data here 
+			
+			var result = []; 
+			var value; //stores the data temporary 
+			var arrayLength = session.currentPlayers.length;
+	
+			//for loop the array and push the info to result array 
+			for (var i = 0; i < arrayLength; i++) {
+				db.users.findOne({clientID: session.currentPlayers[i]}, function(err, user) 
+				{
+					try
+					{		
+						//if user is null meaning no user was found on the db, then throw error
+						if (err != null || user == null)
+						{          
+							throw NWError(ERRInvalidClientID);
+						}
+						value = {
+							"name": user.userName, 
+							"deviceID": user.deviceID, 
+							"imageURL": user.imageURL
+						};
+						result.push(value); //pushing to the temporary array 
+						
+						//returning as a JSON 
+						var message = {}
+						message[kGameSessionObjectKeys.currentSession] = result;
+						res.json(200, message);
+					} 
+					catch (err)
+					{
+						HandleCaughtError(res, err);
+					}
+				});
+			}
 		});
 	});
-	}
-	res.json(200);
 }); 
 
 // Delete to leave game sessions
