@@ -10,6 +10,19 @@ var ERRCookieIDMismatch = 4;
 var ERRSessionExists = 5;
 var ERRInvalidClientID = 6; 
 
+
+var globalLoginRedirectPath = null;
+var globalError = null;
+function setGlobalError(err)
+{
+	globalError = err;
+}
+function setLoginRedirectPath(value)
+{
+	globalLoginRedirectPath = value.toString();
+
+}
+
 // returns [statusCode, Error JSON Object]
 function NWError(code) {
 	var error = {"code": code, "description": ""};
@@ -257,15 +270,14 @@ app.post(kGameServerEndpoints.login, function(req, res)
 	console.log("Got a Login");
 	try 
 	{		
-		var validate;
-		//begin validation before putting onto database
+		// begin validation before putting onto database
 		userName = req.body.userName;
 		deviceID = parseInt(req.body.deviceID, 10);
 		
 		//In postman change header Content-Type: application/json 
 		//in raw enter, {"userName": "koki", "deviceID": "2"}
 
-		//find the user using their userName and deviceID 
+		// Find the user using their userName and deviceID 
 		if (userName == null || typeof userName == "undefined" || userName.length == 0 || userName.length > 20) 
 		{
 			console.log("Error: Username '" + userName + "' does not satisfy requirements");
@@ -277,94 +289,101 @@ app.post(kGameServerEndpoints.login, function(req, res)
 			
 			throw NWError(ERRInvalidPostParameter);
 		}
-		else
-		{
-			// Check if the user is already in the database
-			db.users.findOne({userName: userName, deviceID: deviceID}, function(err, users) 
+		
+		console.log("Checking if the user is in the database");
+		// Check if the user is already in the database
+		db.users.findOne({userName: userName, deviceID: deviceID}, function(err, users) 
+		{	
+			
+			console.log("Cheking if the deviceID is in the database");
+			
+
+			try
 			{	
-				//TODO: Koki check if the device id is present
-				db.users.count({deviceID: deviceID}, function(err, numberOfDeviceID) 
+				// Check if the Device ID has already been taken
+				
+				// We didn't find a user, so add a new one
+				if (err != null || users != null)
+				{          
+					 throw NWError(ERRUserNameOrDeviceAlreadyTaken);
+				}	
+				console.log("User not found \"" + userName + "\", adding user");
+				// Get the count for users so we can create an unique clientID for the users
+				db.users.count(function (err, numberOfClients) 
 				{
 					try
-					{		
-						if (numberOfDeviceID != 0)
-						{     
-							throw NWError(ERRUserNameOrDeviceAlreadyTaken);
-						}	
+					{
+						if(err) 
+						{
+							throw NWError(ERRUnknownServerError);
+						}
+						
+						db.users.count({deviceID: deviceID}, function(err, numberOfDeviceID) 
+						{	
+							console.log("Count of Device IDs is: " + numberOfDeviceID.toString());
+							if (numberOfDeviceID != 0)
+							{   
+								console.log("error, deviceID already taken");
+								setGlobalError(NWError(ERRUserNameOrDeviceAlreadyTaken));  
+								return;
+							}	
+						});
+						if (globalError != null)
+						{
+							console.log("returning because of global error");
+							return;
+						} 
+
+						// Redirect path for the user to post their profile image
+						redirectPath = kGameServerEndpoints.images.replace(":clientID", numberOfClients.toString());
+
+						// Add the user to the database
+						db.users.save(
+									{	userName: userName, 
+										deviceID: deviceID, 
+										clientID: numberOfClients, 
+										hasCompletedLogin: true, 
+										imageURL: redirectPath, 
+										currentSession: null,
+										creationTimeStamp: new Date()
+									}, function(err, saved) 
+						{
+							try 
+							{
+								if( err || !saved ) 
+								{
+									console.log("User not saved");
+									throw NWError(ERRUnknownServerError);
+								}
+								else 
+								{
+									console.log("User saved" + " \"" + userName + "\"");								
+									//setting the cookie
+									res.cookie('clientID',numberOfClients);
+									//setLoginRedirectPath(redirectPath.toString());
+									res.redirect(302, redirectPath);
+								}
+							}
+							catch (err)
+							{
+								console.log("Caught innermost exception: '" + JSON.stringify(err) + "'");
+								HandleCaughtError(res, err);
+							}
+
+						});
 					}
 					catch (err)
 					{
 						HandleCaughtError(res, err);
 					}
 				});
-				
-				try
-				{	
-					// We didn't find a user, so add a new one
-					if (err != null || users != null)
-					{          
-						 throw NWError(ERRUserNameOrDeviceAlreadyTaken);
-					}	
-					console.log("User not found \"" + userName + "\", adding user");
-					// Get the count for users so we can create an unique clientID for the users
-					db.users.count(function (err, numberOfClients) 
-					{
-						try
-						{
-							if(err) 
-							{
-								throw NWError(ERRUnknownServerError);
-							}
-							
-							// Redirect path for the user to post their profile image
-							redirectPath = kGameServerEndpoints.images.replace(":clientID", numberOfClients.toString());
-
-							// Add the user to the database
-							db.users.save(
-										{	userName: userName, 
-											deviceID: deviceID, 
-											clientID: numberOfClients, 
-											hasCompletedLogin: true, 
-											imageURL: redirectPath, 
-											currentSession: null,
-											creationTimeStamp: new Date()
-										}, function(err, saved) 
-							{
-								try 
-								{
-									if( err || !saved ) 
-									{
-										console.log("User not saved");
-										throw NWError(ERRUnknownServerError);
-									}
-									else 
-									{
-										console.log("User saved" + " \"" + userName + "\"");								
-										//setting the cookie
-										res.cookie('clientID',numberOfClients);
-										res.redirect(302, redirectPath)	
-									}
-								}
-								catch (err)
-								{
-									HandleCaughtError(res, err);
-								}
-
-							});
-						}
-						catch (err)
-						{
-							HandleCaughtError(res, err);
-						}
-					});
-				}
-				catch (err)
-				{
-					HandleCaughtError(res, err);
-				}
-			});
-			
-		}
+			}
+			catch (err)
+			{
+				HandleCaughtError(res, err);
+			}
+		});	// END: Check if the user is already in the database
+		
 	} 
 	catch (err) // Outermost Catch
 	{
@@ -377,6 +396,14 @@ app.post(kGameServerEndpoints.login, function(req, res)
 		console.log(err);
 		res.json(err[0], err[1]);
 	}
+
+	if (globalError != null)
+	{
+		console.log("Sending global error");
+		res.json(globalError[0], globalError[1]);
+		setGlobalError(null);
+	}
+	
 });
 
 
@@ -563,7 +590,7 @@ app.post(kGameServerEndpoints.joinSession, function(req, res) {
 		NWValidateClientID(clientID);	// Throws an exception if invalid
 		
 		sessionID = parseInt(sessionID, 10); //change it to int for searching purposes
-//BOOKMARK
+		//BOOKMARK
 		
 		// Find the session the client wants to join 
 		db.sessions.findOne({sessionID: sessionID}, function (err, session) 
@@ -729,7 +756,7 @@ app.delete(kGameServerEndpoints.leaveSession, function(req, res)
 /************************************************************/
 /*							Execution						*/
 /************************************************************/ 
-console.log('Possible routes: ' + JSON.stringify(app.routes, null, '\t'));
+//console.log('Possible routes: ' + JSON.stringify(app.routes, null, '\t'));
 var server = http.createServer(app).listen(app.get('port'), function(){
   console.log('Express server listening on port ' + app.get('port'));
 });
