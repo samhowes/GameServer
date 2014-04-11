@@ -419,17 +419,28 @@ app.post(kGameServerEndpoints.images, function(req, res)
 app.get(kGameServerEndpoints.gameSessions, function(req, res) 
 {
 	console.log("Got a game sessions query!");
-	var activeSessions; 
+	
+	var clientID = req.cookies.clientID;
+	if (NWValidateClientID(clientID)) return NWError(ERRInvalidClientID, res);
+
+	var activeSessions = []; 
 	
 	//querying for all existing sessions 
-	db.sessions.find(function(err, sessions) {
-		if (err) return console.error(err);
-		else activeSessions = sessions; 
-		
-		var message = {}
-		message[kGameSessionObjectKeys.activeSessions] = sessions;
+	db.sessions.find(function(err, sessions) 
+	{
+		if (err) return NWError(ERRUnknownServerError, res);
+		console.log(sessions.length); 
+		if (sessions != null && sessions.length != 0)
+		{
+			for(var i =0; i<sessions.length; i++)
+			{
+				activeSessions.push(NWActiveGameSessionsQuery(sessions[i]));
+			}
+		}	
+		var responseBody = {};
+		responseBody[kGameSessionObjectKeys.activeSessions] = activeSessions;
 
-		res.json(200, message);
+		res.json(200, responseBody);
 	});
 }); 
 
