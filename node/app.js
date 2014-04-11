@@ -103,7 +103,7 @@ function NWCurrentPlayer(dbCurrentPlayer)
 
 function NWValidateClientInSession(clientID, nextHandler)
 {
-	db.users.findOne({clientID: parseInt(clientID, 10)}, function(err, client)
+	db.users.findOne({clientID: clientID}, function(err, client)
 	{
 		if (err != null) return nextHandler(ERRUnknownServerError);
 
@@ -131,7 +131,6 @@ function NWGameSessionQuery(clientID, dbGameSessionInstance, completionHandler)
 
 	var localCompletionHandler = function ()
 	{
-		console.log("Returning globalNWCurrentPlayers as: " + JSON.stringify(globalNWCurrentPlayers));
 		retVal[0] = 200;
 		retVal[1] = {
 			"sessionName": 		dbGameSessionInstance["sessionName"],
@@ -199,10 +198,9 @@ var kGameServerEndpoints = {
 
 function NWValidateClientID(clientID)
 {
-	var localClientID = parseInt(clientID, 10);
-	if(localClientID == null || isNaN(localClientID) || localClientID < 0 || localClientID.toString().length > 10)
+	if(clientID == null || isNaN(clientID) || clientID < 0 || clientID.toString().length > 10)
 	{
-		console.log("Error: clientID '" + localClientID + "' does not satisfy requirements");
+		console.log("Error: clientID '" + clientID + "' does not satisfy requirements");
 		return true;
 	}
 	return false;
@@ -210,8 +208,7 @@ function NWValidateClientID(clientID)
 
 function NWValidateSessionID(sessionID)
 {
-	var localSessionID = parseInt(sessionID, 10);
-	if(localSessionID == null || isNaN(localSessionID) || localSessionID < 0 || localSessionID.toString().length > 5)
+	if(sessionID == null || isNaN(sessionID) || sessionID < 0 || sessionID.toString().length > 5)
 	{
 		console.log("Error Invalid sessionID specified");
 		return true;
@@ -266,7 +263,7 @@ app.post(kGameServerEndpoints.login, function(req, res)
 	// begin validation before putting onto database
 	var userName = req.body.userName;
 	var deviceID = parseInt(req.body.deviceID, 10);
-	var clientID = req.cookies.clientID;
+	var clientID = parseInt(req.cookies.clientID, 10);
 	
 	
 	
@@ -310,7 +307,7 @@ app.post(kGameServerEndpoints.login, function(req, res)
 				if (NWValidateClientID(clientID) == false && clientID == user.clientID) 
 				{
 					console.log("Updating deviceID for user to: " + deviceID);
-					db.users.update({clientID: parseInt(clientID, 10)}, 
+					db.users.update({clientID: clientID}, 
 						{$set:{deviceID: deviceID}}, function(err, result) 
 					{
 						if (err) return NWError(ERRUnknownServerError, res);
@@ -398,7 +395,7 @@ app.post(kGameServerEndpoints.login, function(req, res)
 // Aproved for real on 4/11 at 11:44 Sam and Koki
 app.post(kGameServerEndpoints.images, function(req, res) 
 {
-	var clientID = req.cookies.clientID;
+	var clientID = parseInt(req.cookies.clientID, 10);
 	if (NWValidateClientID(clientID)) return NWError(ERRInvalidClientID, res);
 
 	var completionHandler = function() 
@@ -436,7 +433,7 @@ app.get(kGameServerEndpoints.gameSessions, function(req, res)
 {
 	console.log("Got a game sessions query!");
 	
-	var clientID = req.cookies.clientID;
+	var clientID = parseInt(req.cookies.clientID, 10);
 	if (NWValidateClientID(clientID)) return NWError(ERRInvalidClientID, res);
 
 	var activeSessions = []; 
@@ -467,12 +464,13 @@ app.get(kGameServerEndpoints.gameSessions, function(req, res)
 
 
 // Post to join game sessions
+// Approved for real on 4/11 at 3:46 Sam and koki Commit: 978edee2
 app.post(kGameServerEndpoints.joinSession, function(req, res) {
 
 	console.log("Got an attempt to join a session");
 
-	var clientID = req.cookies.clientID;
-	var sessionID = req.body.sessionID; 	//is a number(int), pass to db as string
+	var clientID = parseInt(req.cookies.clientID, 10);
+	var sessionID = parseInt(req.body.sessionID, 10);	//is a number(int), pass to db as string
 	
 	if (NWValidateClientID(clientID)) 	return NWError(ERRInvalidClientID, res);
 	if (NWValidateSessionID(sessionID)) return NWError(ERRInvalidPostParameter, res);
@@ -528,7 +526,7 @@ app.post(kGameServerEndpoints.joinSession, function(req, res) {
 	secondFunction = function()
 	{
 		db.users.update(
-				{clientID: parseInt(clientID,10)	},
+				{clientID: clientID	},
 				{$set:{currentSession: sessionID}}, function(err, result) 
 		{
 			if (err != null) return NWError(ERRUnknownServerError, res);
@@ -553,128 +551,91 @@ app.post(kGameServerEndpoints.joinSession, function(req, res) {
 
 });
 
-// Create game sessions
-// Approved on 4/9 at 7:46 pm
-// Needs work from Koki
+// POST Create game session
 app.post(kGameServerEndpoints.createSession, function(req, res)
 {
-	//Input sent by user, type string
-	var newSessionName = "";
-	var clientID = "";
-	
-	console.log("Got a request to create a game session"); 
-	try 
-	{
-		//begin validation before putting onto database
-		newSessionName = req.body.newSessionName;
-		clientID = parseInt(req.cookies.clientID);
-	
-		console.log("clientID: '" + clientID + "' sessionName Requested: '" + newSessionName + "'");
+	console.log("Got an attempt to create a session");
 
-		NWValidateClientID(clientID);
-		//find the user using their username and deviceID 
-		/****bug with instanceOf it detects all strings as errors****/
-		if (newSessionName == null || !(typeof(newSessionName) == 'string') || newSessionName.length == 0 || newSessionName.length > 15) 
-		{
-			console.log("Error Invalid session name");
-			throw NWError(ERRInvalidPostParameter);
-		}	
-		
-		//TODO: KOKI query Database for clientID, checking to see clientID exists in database 
-		db.users.findOne({clientID: clientID}, function(err, user) 
-		{
-			try
-			{		
-				//if user is null meaning no user was found on the db, then throw error
-				if (err != null || user == null)
-				{          
-					throw NWError(ERRInvalidClientID);
-				}	
-			}
-			catch (err)
-			{
-				HandleCaughtError(res, err);
-			}
-		});
-		
-		/****bug with name and must change to sessionName or just continues creating the same sessionName over and over****/
+	// Input Parameters: clientID, newSessionName
+	var clientID = parseInt(req.cookies.clientID, 10);
+	var newSessionName = req.body.newSessionName; 
+	
+	if (NWValidateClientID(clientID)) 	return NWError(ERRInvalidClientID, res);
+	
+	if (newSessionName == null || !(typeof newSessionName == 'string') || newSessionName.length == 0 || newSessionName.length > 15)
+	{
+		return NWError(ERRInvalidPostParameter, res);
+	}
+	
+	// Output Parameters: full session info
+	var completionHandler = function (retVals)
+	{
+		res.json(retVals[0], retVals[1]);
+	}
+
+	var firstFunction;
+	var secondFunction;
+	var thirdFunction;
+	var fourthFunction;
+	var fifthFunction;
+
+	// Validate: validate if the client is already in a session
+	var validateFunction = function(nextHandler)
+	{
+		NWValidateClientInSession(clientID, nextHandler);
+	}
+
+	// First: Check if a session with that name already exists
+	firstFunction = function (err)
+	{
+		console.log("Reached the first function err = " + err);
+		if (err != null) return NWError(err, res);
 		db.sessions.findOne({sessionName: newSessionName}, function(err, sessions) 
 		{
-			try 
+			//when session is not found
+			if(err != null || sessions != null)
 			{
-				//when session is not found
-				if(err != null || sessions != null)
-				{
-					console.log("Got an error: '" + err + "'' sessions " + sessions);
-					throw NWError(ERRSessionExists);
-				}
+				return NWError(ERRSessionExists, res);
+			}
 
-				console.log("Session not found \"" + newSessionName + "\", adding new session"); 
-								
-				//get the client cookie ID and converting it to integer 
-				
-				//get the count for sessions so we can create an unique sessionID for the sessions
-				db.sessions.count(function (err, numberOfSessions) 
-				{
-					try
-					{
-						if(err) 
-						{
-							throw NWError(ERRUnknownServerError);
-						}
-						
-						// Execute the query to create the game session database
-						var newGameSession = DBGameSession(newSessionName, numberOfSessions, clientID);
-						db.sessions.save(newGameSession, function(err, saved) 
-						{
-							if( err || !saved )
-							{ 
-								HandleCaughtError(res, NWError(ERRUnknownServerError));
-							}
-							else
-							{
-								console.log("Session with name: '" + newSessionName + "' created");
-								
-								// Update the current session for the user 
-								db.users.update({clientID: clientID}, {$set:{currentSession: saved.sessionID}}, function(err, result) 
-								{
-									if (err) HandleCaughtError(res, NWError(ERRUnknownServerError));
-								});
-
-								console.log("Created New game session: " + JSON.stringify(newGameSession));
-								var dataToSend = NWGameSessionQuery(clientID, newGameSession);
-								res.send(dataToSend[0], dataToSend[1]);
-							}
-						});
-					}
-					catch (err)
-					{
-						HandleCaughtError(res, err);
-					}
-
-				});
-			}		
-			catch (err)
-			{
-				HandleCaughtError(res, err);
-			}		
+			console.log("Session not found \"" + newSessionName + "\", adding new session"); 
+			secondFunction();
 		});
-		
-	} 
-	catch (err)
-	{
-		console.log("Caught error:");
-		if (err == null)
-		{
-			console.log("Error not specified in code");
-			err = NWError(ERRInvalidPostParameter);	
-		}
-		else 
-		{
-			console.log(err);
-		}
-		res.json(err[0], err[1]);
+			
 	}
+
+	// Second: Count the number of sessions to create a new session ID
+	secondFunction = function()
+	{
+		db.sessions.count(function (err, numberOfSessions) 
+		{
+			if (err != null) return NWError(ERRUnknownServerError, res);
+
+			thirdFunction(numberOfSessions);
+		});
+	}
+	// Third: Create the new session and save it to the database
+	thirdFunction = function(numberOfSessions)
+	{
+		var newGameSession = DBGameSession(newSessionName, numberOfSessions, clientID);
+		db.sessions.save(newGameSession, function(err, saved) 
+		{
+			if (err != null || saved == null) return NWError(ERRUnknownServerError, res);
+			console.log("Session with name: '" + newSessionName + "' created");
+								
+			// Update the current session for the user 
+			db.users.update({clientID: clientID}, {$set:{currentSession: saved.sessionID}}, function(err, result) 
+			{
+				if (err != null) return NWError(ERRUnknownServerError, res);
+
+				console.log("Created New game session: " + JSON.stringify(newGameSession));
+				return NWGameSessionQuery(clientID, newGameSession, completionHandler);
+
+			});
+		});
+	}
+
+	validateFunction(firstFunction);
 });
 
 
