@@ -214,7 +214,7 @@ var express = require('express');
 var http = require('http');
 var path = require('path');
 var mongoose = require('mongoose');
- 
+var fs = require('fs');
 var app = express();
  
 // all environments
@@ -389,7 +389,8 @@ app.post(kGameServerEndpoints.login, function(req, res)
 	
 });
 
-/// Post files
+/// POST a client image to the server
+// Aproved for real on 4/11 at 11:44 Sam and Koki
 app.post(kGameServerEndpoints.images, function(req, res) 
 {
 	var clientID = req.cookies.clientID;
@@ -404,36 +405,13 @@ app.post(kGameServerEndpoints.images, function(req, res)
 		var newPath = __dirname + "/images/" + imageName;
 
 		// Do the actual write the the images directory
-		fs.writeFile(newPath, data, function (err) 
+		fs.writeFile(newPath, data,function (err) 
 		{
 			if(err != null) return NWError(ERRUnknownServerError, res);
 
 			res.send(200, "");
 		});
 	});
-});
-
-// PUT an image to the server
-app.put(kGameServerEndpoints.images, function(req, res)
-{
-	console.log("got an image put!");
-	try {
-		var putClientID = req.params.clientID;
-		var cookieClientID = req.cookies.clientID;
-		if (putClientID == cookieClientID) {
-			var clientID = putClientID;
-			res.send(200);
-		}
-		else {
-			var retVals = NWError(ERRCookieIDMismatch);
-			res.json(retVals[0], retVals[1]);
-		}
-	}
-	catch (err)
-	{
-		var retVals = NWError(ERRInvalidPostParameter);
-		res.json(retVals[0], retVals[1]);
-	}
 });
 
 //------------------ Game Sessions -------------------------//
