@@ -242,7 +242,7 @@ var fs = require('fs');
 var app = express();
  
 // all environments
-app.set('port', process.env.PORT || 3000);
+app.set('port', process.env.PORT || 3002);
 app.set('views', __dirname + '/views');
 app.set('view engine', 'jade');
  
@@ -760,6 +760,7 @@ app.get(kGameServerEndpoints.getSesionWithID, function(req, res)
 }); 
 
 // Delete to leave game sessions
+// Aproved for real on 4/11 at 6:44 Sam and Koki: 7927e244
 app.delete(kGameServerEndpoints.leaveSession, function(req, res)
 {
 	
