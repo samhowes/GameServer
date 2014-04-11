@@ -54,8 +54,8 @@ function NWError(code, res) {
 			break;
 
 		case ERRCookieIDMismatch:
-			description = "Your clientID does not match the image at that location"
-			statusCode = 401; // Unauthorized
+			description = "Your clientID does not match the image at that location";
+			statusCode = 401;
 			break;
 
 		case ERRSessionExists:
@@ -121,7 +121,11 @@ function NWValidateClientInSession(clientID, shouldBeInSession, nextHandler)
 	{
 		if (err != null) return nextHandler(ERRUnknownServerError);
 
-		if (shouldBeInSession == false && client.currentSession != null)
+		if (client == null)
+		{
+			return nextHandler(ERRInvalidClientID);
+		}
+		else if (shouldBeInSession == false && client.currentSession != null)
 		{
 			return nextHandler(ERRClientAlreadyInSession);
 		}
@@ -402,7 +406,7 @@ app.post(kGameServerEndpoints.login, function(req, res)
 });
 
 /// POST a client image to the server
-// Aproved for real on 4/11 at 11:44 Sam and Koki
+// Aproved for real on 4/11 at 11:44 Sam and Koki: 685f87c1
 app.post(kGameServerEndpoints.images, function(req, res) 
 {
 	var clientID = parseInt(req.cookies.clientID, 10);
@@ -436,6 +440,8 @@ app.post(kGameServerEndpoints.images, function(req, res)
 	});
 });
 
+/// Get a User Image
+// Aproved for real on 4/11 at 5:35 Sam and Koki: 
 app.get(kGameServerEndpoints.images, function(req, res)
 {
 
@@ -467,6 +473,8 @@ app.get(kGameServerEndpoints.images, function(req, res)
 		{
 			if (err != null) 	return NWError(ERRUnknownServerError, res);
 			if (user == null)	return NWError(ERRInvalidClientID, res);
+
+			if (user.currentSession == null) return NWError(ERRClientNotMemberOfSession, res);
 
 			db.users.findOne({clientID: requestedClientID}, function(err, requestedUser)
 			{
@@ -559,6 +567,8 @@ app.post(kGameServerEndpoints.joinSession, function(req, res) {
 		db.sessions.findOne({sessionID: sessionID}, function (err, session) 
 		{
 			if (err != null) return NWError(ERRUnknownServerError, res);
+			if (session == null) return NWError(ERRInvalidPostParameter, res);
+
 			// Add the user to the current players array
 			session.currentPlayers.push(clientID);
 			
@@ -752,39 +762,76 @@ app.get(kGameServerEndpoints.getSesionWithID, function(req, res)
 // Delete to leave game sessions
 app.delete(kGameServerEndpoints.leaveSession, function(req, res)
 {
-	console.log("Removing the user!");
-	var clientID = ""; //is a number(int), send to db as string
-	//get the client cookie ID 
-	var putClientID = parseInt(req.cookies.clientID, 10);
-	if(clientID == null || typeof clientID == "undefined" || clientID.length <= 0 || clientID >10 || clientID == "")
+	
+	// Input: Cookie clientID
+	var clientID  = parseInt(req.cookies.clientID, 10);
+
+	console.log("Got a request to leave a session from clientID: " + clientID);
+
+	if (NWValidateClientID(clientID)) 	return NWError(ERRInvalidClientID, res);
+	// Output: 200 OK
+	var completionHandler = function ()
 	{
-		console.log("error");
-		message = "That is an invalid client ID. Please try again"
-		res.json(400, message);
-	}else
-	{
-	db.users.findOne({clientID: putClientID}, function (err, user) {
-		//removing the user
-		var tmpSessionID = user.currentSession;
-		console.log(tmpSessionID); 
-		
-		//setting the currentsession in user to null 
-		db.users.update(
-			{clientID: putClientID},
-			{$set:{currentSession: null}}, function(err, result) {
-		});
-			
-		//removing the user from the currentPlayers array 
-		db.sessions.findOne({sessionID: tmpSessionID}, function (err, session) {
-			//removing the user
-			db.sessions.update(
-				{sessionID: tmpSessionID},
-				{ $pull: {currentPlayers: {clientID: putClientID}}}
-			);
-		});
-	});
+		res.send(200, "");
 	}
-	res.send(200);	
+
+	var firstFunction;
+	
+	// DBValidate: Client exists and client must be in a session
+	var validateFunction = function(nextHandler)
+	{
+		NWValidateClientInSession(clientID, true, nextHandler);
+	}
+
+	
+	firstFunction = function (err)
+	{
+		console.log("Reached the first function err = " + err);
+		if (err != null) return NWError(err, res);
+
+		// Find the user with clientID
+		db.users.findOne({clientID: clientID}, function(err, user)
+		{
+			if (err != null || user == null) return NWError(ERRUnknownServerError, res);
+
+			// Update the user's current session to null
+			db.users.update({clientID: clientID}, {$set:{currentSession: null}}, function (err, result)
+			{
+				if (err != null || result == null) return NWError(ERRUnknownServerError, res);
+				// Find the session
+				db.sessions.findOne({sessionID: user.currentSession}, function(err, session)
+				{
+					if (err != null || session == null) return NWError(ERRUnknownServerError, res);
+
+					if (session.numberOfPlayers == 1)
+					{
+						db.sessions.remove({sessionID: session.sessionID});
+						return completionHandler();
+					}
+					// Update the session's current players array
+					db.sessions.update({sessionID: session.sessionID}, {$pull:{currentPlayers: clientID}}, function(err, innerResult)
+					{
+						console.log("Updating the sessions current players array; err = " + err);
+						if (err != null || innerResult == null) return NWError(ERRUnknownServerError, res);
+
+						// Update the session's number of players
+						db.sessions.update({sessionID: session.sessionID}, 
+							{$set: {numberOfPlayers: session.numberOfPlayers-1}}, 
+							function(err, finalResult)
+						{
+							// this is the world record for nested function
+							console.log("Updating the sessions number of players err = " + err);
+							if (err != null || finalResult == null) return NWError(ERRUnknownServerError, res);
+							return completionHandler();
+						});
+					});
+				});
+			});
+		});
+		
+	}
+
+	validateFunction(firstFunction);
 });
 
 /************************************************************/
