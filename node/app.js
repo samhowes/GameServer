@@ -10,18 +10,7 @@ var ERRCookieIDMismatch = 4;
 var ERRSessionExists = 5;
 var ERRInvalidClientID = 6; 
 
-var consoleMessage = "";
 
-var globalLoginInfo = 
-{
-	"numberOfClients": -1,
-	"redirectPath": null
-}
-
-var globalError = null;
-
-
-// returns [statusCode, Error JSON Object]
 function NWError(code, res) {
 	var error = {"code": code, "description": ""};
 	var description = "";
@@ -68,15 +57,6 @@ function NWError(code, res) {
 	res.json(statusCode, {"Error": error});
 }
 
-function HandleCaughtError(res, err)
-{
-	console.log("In HandleCaughtError, err is: '" + err);
-	if (!(err instanceof Array && err.length == 2))
-	{
-		err = NWError(ERRUnknownServerError);
-	}
-	res.json(err[0], err[1]);
-}
 
 var kGameSessionObjectKeys = {
 	"name": "sessionName",
@@ -208,11 +188,13 @@ var kGameServerEndpoints = {
 
 function NWValidateClientID(clientID)
 {
-	if(clientID == null || isNaN(clientID) || clientID < 0 || clientID.toString().length > 10)
+	var localClientID = parseInt(clientID, 10);
+	if(localClientID == null || isNaN(localClientID) || localClientID < 0 || localClientID.toString().length > 10)
 	{
-		console.log("Error: clientID '" + clientID + "' does not satisfy requirements");
-		throw NWError(ERRInvalidPostParameter);
+		console.log("Error: clientID '" + localClientID + "' does not satisfy requirements");
+		return true;
 	}
+	return false;
 }
 
 function NWValidateSessionID(sessionID)
@@ -256,8 +238,7 @@ var db = require("mongojs").connect(databaseUrl, collections);
 /************************************************************/
 
 //--------------------- Login ------------------------------//
-// Approved on 4/9 at 7:46 pm
-// Needs work from Koki: Find device ID
+// Aproved for real on 4/10 at 10:05 Sam and Koki
 app.post(kGameServerEndpoints.login, function(req, res)
 {
 	//the two inputs which are being sent by the user to the database
@@ -408,6 +389,29 @@ app.post(kGameServerEndpoints.login, function(req, res)
 	
 });
 
+/// Post files
+app.post(kGameServerEndpoints.images, function(req, res) 
+{
+	var clientID = req.cookies.clientID;
+	if (NWValidateClientID(clientID)) return NWError(ERRInvalidClientID, res);
+
+	// Node stored the POST to a temporary file, copy it to the images directory
+	fs.readFile(req.files.image.path, function (err, data) 
+	{
+		if(err != null) return NWError(ERRUnknownServerError, res);
+		var imageName = clientID + '.png';
+		
+		var newPath = __dirname + "/images/" + imageName;
+
+		// Do the actual write the the images directory
+		fs.writeFile(newPath, data, function (err) 
+		{
+			if(err != null) return NWError(ERRUnknownServerError, res);
+
+			res.send(200, "");
+		});
+	});
+});
 
 // PUT an image to the server
 app.put(kGameServerEndpoints.images, function(req, res)
