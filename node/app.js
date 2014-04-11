@@ -22,7 +22,7 @@ var globalError = null;
 
 
 // returns [statusCode, Error JSON Object]
-function NWError(code) {
+function NWError(code, res) {
 	var error = {"code": code, "description": ""};
 	var description = "";
 	var statusCode = 0;
@@ -64,8 +64,8 @@ function NWError(code) {
 			break; 
 	}
 	error["description"] = description;
-	globalError = [statusCode, {"Error": error}]
-	return globalError;
+	
+	res.json(statusCode, {"Error": error});
 }
 
 function HandleCaughtError(res, err)
@@ -285,167 +285,127 @@ app.post(kGameServerEndpoints.login, function(req, res)
 	} */
 
 	console.log("Got a Login");
-	try 
-	{		
-		// begin validation before putting onto database
-		userName = req.body.userName;
-		deviceID = parseInt(req.body.deviceID, 10);
-		
-		//In postman change header Content-Type: application/json 
-		//in raw enter, {"userName": "koki", "deviceID": "2"}
+	
+	// begin validation before putting onto database
+	userName = req.body.userName;
+	deviceID = parseInt(req.body.deviceID, 10);
+	
+	//In postman change header Content-Type: application/json 
+	//in raw enter, {"userName": "koki", "deviceID": "2"}
 
-		// Find the user using their userName and deviceID 
-		if (userName == null || typeof userName == "undefined" || userName.length == 0 || userName.length > 20) 
-		{
-			console.log("Error: Username '" + userName + "' does not satisfy requirements");
-			throw NWError(ERRInvalidPostParameter);
-		}
-		else if(deviceID == null || isNaN(deviceID) || deviceID < 0 || deviceID > 99)
-		{
-			console.log("Error: deviceID '" + deviceID + "' does not satisfy requirements");
-			
-			throw NWError(ERRInvalidPostParameter);
-		}
-		
-		console.log("Checking if the user is in the database");
-		
-
-		// First: Check if user is already in database
-		var firstFunction;
-		var secondFunction;
-		var thirdFunction;
-		var fourthFunction;
-
-		firstFunction = function()
-		{
-			db.users.findOne({userName: userName, deviceID: deviceID}, function(err, users) 
-			{			
-				// We didn't find a user, so add a new one
-				//console.log("First: Users found: '" + users + "'");
-				consoleMessage += "First: Users found: '" + users + "'";
-
-				if (err != null || users != null)
-				{ 
-					console.log("returning global errror");
-					NWError(ERRUserNameOrDeviceAlreadyTaken);
-					return;
-				}	
-				console.log("User not found \"" + userName + "\", adding user");
-				// Get the count for users so we can create an unique clientID for the users
-				secondFunction();	
-			});	// END: Check if the user is already in the database
-		}
-		/*console.log("globalError: " + globalError);
-		if (globalError != null) 
-			{
-				console.log("GlobalError caught! after 1");
-				throw globalError;
-			}*/
-
-
-		// Second: check if device ID is already in database
-		//console.log("Cheking if the deviceID is in the database");
-		secondFunction = function()
-		{
-			db.users.count({deviceID: deviceID}, function(err, numberOfDeviceID, callback ) 
-			{	
-				if (globalError != null) 
-				{
-					consoleMessage += "Second: Not Executing because of GLobal Error";
-					return;
-				}
-				console.log("Count of Device IDs is: " + numberOfDeviceID.toString());
-				if (numberOfDeviceID != 0)
-				{   
-					console.log("error, deviceID already taken");
-					NWError(ERRUserNameOrDeviceAlreadyTaken);  
-					return;
-				}
-
-			});
-		}	
-
-		// Third: Count the number of clients so we can create a new unique clientID
-		thirdFunction = function()
-		{
-			db.users.count(function (err, numberOfClients) 
-			{
-				if (globalError != null) 
-				{
-					consoleMessage += "third: Not Executing because of GLobal Error";
-					return;
-				}
-				if(err || numberOfClients != 0) 
-				{
-					NWError(ERRUnknownServerError);
-					return;
-				}
-				console.log("Number of clients found at 3: '" + numberOfClients + "'");
-				//setglobalLoginInfo.numberOfClients(numberOfClients);
-				// Redirect path for the user to post their profile image
-				globalLoginInfo.numberOfClients = numberOfClients;
-				globalLoginInfo.redirectPath = kGameServerEndpoints.images.replace(":clientID", globalLoginInfo.numberOfClients.toString());
-				fourthFunction();
-			});
-		}
-
-		// Third: Save the user to the database
-		fourthFunction = function ()
-		{
-			db.users.save(
-						{	userName: userName, 
-							deviceID: deviceID, 
-							clientID: globalLoginInfo.numberOfClients, 
-							hasCompletedLogin: true, 
-							imageURL: globalLoginInfo.redirectPath, 
-							currentSession: null,
-							creationTimeStamp: new Date()
-						}, function(err, saved) 
-			{
-				if (globalError != null) 
-				{
-					consoleMessage += "Fourth: Not Executing because of GLobal Error";
-					completionHandler();
-					return;
-				}
-				
-				if( err || !saved ) 
-				{
-					console.log("User not saved");
-					NWError(ERRUnknownServerError);
-					return;
-				}
-				
-				console.log("User saved" + " \"" + userName + "\"");								
-				//setting the cookie
-				res.cookie('clientID',globalLoginInfo.numberOfClients);
-				//setLoginRedirectPath(redirectPath.toString());
-				res.redirect(302, globalLoginInfo.redirectPath);
-
-			});
-		}
-
-		firstFunction();
-	} 
-	catch (err) // Outermost Catch
+	// Find the user using their userName and deviceID 
+	if (userName == null || typeof userName == "undefined" || userName.length == 0 || userName.length > 20) 
 	{
-
-		if (globalError != null)
-		{
-			globalError = NWError(ERRInvalidPostParameter);
-		}
-		completionHandler();
+		console.log("Error: Username '" + userName + "' does not satisfy requirements");
+		return NWError(ERRInvalidPostParameter, res);
 	}
-/*
-
-	console.log("Finally: global error = " + globalError);
-	if (globalError != null)
+	else if(deviceID == null || isNaN(deviceID) || deviceID < 0 || deviceID > 99)
 	{
-		console.log("caught error:");
-		console.log(globalError);
-		res.json(globalError[0], globalError[1]);
-		globalError = null;
-	}*/
+		console.log("Error: deviceID '" + deviceID + "' does not satisfy requirements");
+		
+		return NWError(ERRInvalidPostParameter, res);
+	}
+	
+	console.log("Checking if the user is in the database");
+	
+
+	// First: Check if user is already in database
+	var firstFunction;
+	var secondFunction;
+	var thirdFunction;
+	var fourthFunction;
+
+	firstFunction = function()
+	{
+		db.users.findOne({userName: userName}, function(err, users) 
+		{			
+			// We didn't find a user, so add a new one
+			//console.log("First: Users found: '" + users + "'");
+			console.log("First: Users found: '" + users + "'");
+
+			if (err != null || users != null)
+			{ 
+				console.log("returning global errror");	
+				return NWError(ERRUserNameOrDeviceAlreadyTaken, res);
+			}
+
+			console.log("User not found \"" + userName + "\", adding user");
+			// Get the count for users so we can create an unique clientID for the users
+			secondFunction();	
+		});	// END: Check if the user is already in the database
+	}
+	/*console.log("globalError: " + globalError);
+	if (globalError != null) 
+		{
+			console.log("GlobalError caught! after 1");
+			throw globalError;
+		}*/
+
+
+	// Second: check if device ID is already in database
+	//console.log("Cheking if the deviceID is in the database");
+	secondFunction = function()
+	{
+		db.users.count({deviceID: deviceID}, function(err, numberOfDeviceID) 
+		{	
+			console.log("Count of Device IDs is: " + numberOfDeviceID.toString());
+			if (numberOfDeviceID != 0)
+			{   
+				console.log("error, deviceID already taken");
+				return NWError(ERRUserNameOrDeviceAlreadyTaken, res);
+			}
+			thirdFunction();
+		});
+	}	
+
+	// Third: Count the number of clients so we can create a new unique clientID
+	thirdFunction = function()
+	{
+		db.users.count(function (err, numberOfClients) 
+		{
+			if(err) 
+			{
+				return NWError(ERRUnknownServerError, res);
+			}
+			console.log("Number of clients found at 3: '" + numberOfClients + "'");
+			//setglobalLoginInfo.numberOfClients(numberOfClients);
+			// Redirect path for the user to post their profile image
+			
+			redirectPath = kGameServerEndpoints.images.replace(":clientID", numberOfClients.toString());
+			fourthFunction(numberOfClients, redirectPath);
+		});
+	}
+
+	// Third: Save the user to the database
+	fourthFunction = function (numberOfClients, redirectPath)
+	{
+		db.users.save(
+					{	userName: userName, 
+						deviceID: deviceID, 
+						clientID: numberOfClients, 
+						hasCompletedLogin: true, 
+						imageURL: redirectPath, 
+						currentSession: null,
+						creationTimeStamp: new Date()
+					}, function(err, saved) 
+		{	
+			if( err || !saved ) 
+			{
+				console.log("User not saved");
+				return NWError(ERRUnknownServerError, res);
+			}
+			
+			console.log("User saved" + " \"" + userName + "\"");								
+			//setting the cookie
+			res.cookie('clientID', numberOfClients);
+			//setLoginRedirectPath(redirectPath.toString());
+			res.redirect(302, redirectPath);
+
+		});
+	}
+
+	firstFunction();
+	
 });
 
 
