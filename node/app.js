@@ -10,8 +10,27 @@ var ERRCookieIDMismatch = 4;
 var ERRSessionExists = 5;
 var ERRInvalidClientID = 6; 
 var ERRClientAlreadyInSession = 7;
+var ERRNotInSameSession = 8;
 
 var globalNWCurrentPlayers = null;
+
+var kGameServerEndpoints = {
+	"gameSessions":  	"/game_sessions",		  	//GET
+	"joinSession": 	 	"/game_sessions/join",   	//POST
+	"createSession": 	"/game_sessions/create",	//POST
+	"leaveSession":  	"/game_sessions/leave",  	//DELETE
+	"images": 		 	"/images/:clientID.png", 	//POST
+	"login": 		 	"/login",				  	//POST
+	"getSesionWithID": 	"/game_sessions/:sessionID"	//GET
+};
+
+var kGameSessionObjectKeys = {
+	"name": "sessionName",
+	"id": "id",
+	"activeSessions": "activeSessions",
+	"currentPlayers": "currentPlayers", 
+	"currentSession": "currentSession"
+};
 
 function NWError(code, res) {
 	var error = {"code": code, "description": ""};
@@ -53,7 +72,11 @@ function NWError(code, res) {
 			description = "You are already a member of a session";
 			statusCode = 401;
 			break;
-
+		
+		case ERRNotInSameSession:
+			description = "You are not in the same session as that user";
+			statusCode = 401;
+			break;
 
 		default:
 			description = "Unknown server error";
@@ -64,15 +87,6 @@ function NWError(code, res) {
 	
 	res.json(statusCode, {"Error": error});
 }
-
-
-var kGameSessionObjectKeys = {
-	"name": "sessionName",
-	"id": "id",
-	"activeSessions": "activeSessions",
-	"currentPlayers": "currentPlayers", 
-	"currentSession": "currentSession"
-};
 
 /* Used for creating a game session to store in the database */
 // Approved on 4/9 at 7:46 pm
@@ -191,16 +205,6 @@ function NWActiveGameSessionsQuery(dbGameSessionInstance) {
 		"sessionID": 	dbGameSessionInstance["sessionID"]
 	};
 }
-
-var kGameServerEndpoints = {
-	"gameSessions":  	"/game_sessions",		  	//GET
-	"joinSession": 	 	"/game_sessions/join",   	//POST
-	"createSession": 	"/game_sessions/create",	//POST
-	"leaveSession":  	"/game_sessions/leave",  	//DELETE
-	"images": 		 	"/images/:clientID.png", 	//POST
-	"login": 		 	"/login",				  	//POST
-	"getSesionWithID": 	"/game_sessions/:sessionID"	//GET
-};
 
 function NWValidateClientID(clientID)
 {
@@ -432,6 +436,55 @@ app.post(kGameServerEndpoints.images, function(req, res)
 	});
 });
 
+app.get(kGameServerEndpoints.images, function(req, res)
+{
+
+	// Input Paremters: clientID From Cookie, requested clientID from URL
+	var clientID = 			parseInt(req.cookies.clientID, 10);
+	var requestedClientID = parseInt(req.params.clientID, 10);
+	
+	console.log("Got an image request from client: " + clientID + " for clientID: " + requestedClientID);
+
+	// Validate: clientID, requestedClientID values
+	if (NWValidateClientID(clientID)) 			return NWError(ERRInvalidClientID, res);
+	if (NWValidateClientID(requestedClientID)) 	return NWError(ERRInvalidClientID, res);	
+
+	// Output: Image file in .png format
+	var completionHandler = function()
+	{
+		console.log("Sending image to the user");
+		var filename = requestedClientID + '.png';
+
+		var img = fs.readFileSync(__dirname + "/images/" + filename);
+		res.writeHead(200, {'Content-Type': 'image/png'});
+		res.end(img, 'binary');
+	}
+
+	// DBValidate: verify that the clients are in the same session
+	var validateFunction = function ()
+	{
+		db.users.findOne({clientID: clientID}, function(err, user)
+		{
+			if (err != null) 	return NWError(ERRUnknownServerError, res);
+			if (user == null)	return NWError(ERRInvalidClientID, res);
+
+			db.users.findOne({clientID: requestedClientID}, function(err, requestedUser)
+			{
+				if (err != null) 			return NWError(ERRUnknownServerError, res);
+				if (requestedUser == null)	return NWError(ERRInvalidPostParameter, res);
+
+				if (user.currentSession != requestedUser.currentSession)
+				{
+					return NWError(ERRNotInSameSession, res);
+				}
+				return completionHandler();
+			});
+		});
+	};
+	validateFunction();
+});
+
+
 //------------------ Game Sessions -------------------------//
 // Get all game sessions
 // Aproved for real on 4/11 at 12:15 Sam and koki Commit: 1ee640f8
@@ -647,6 +700,7 @@ app.post(kGameServerEndpoints.createSession, function(req, res)
 
 
 // GET The user's current session
+// Approved for real on 4/11 at 5:08pm Sam and koki Commit: d8a64367
 app.get(kGameServerEndpoints.getSesionWithID, function(req, res) 
 {
 
