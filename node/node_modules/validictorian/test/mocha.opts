@@ -1,0 +1,4 @@
+--require should
+--growl
+--reporter list
+--compilers coffee:coffee-script/register
