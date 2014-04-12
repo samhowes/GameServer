@@ -2,6 +2,8 @@
 /*		Network Classes and Template Functions				*/
 /************************************************************/
 
+var consoleDiv = '-----------------------------------------------------------------------------\n'
+
 var ERRUnknownServerError = 0;
 var ERRClientNotMemberOfSession = 1;
 var ERRUserNameAlreadyTaken = 2;
@@ -80,6 +82,7 @@ function NWError(code, res) {
 			break;
 		
 		case ERRNotInSameSession:
+
 			description = "You are not in the same session as that user";
 			statusCode = 401;
 			break;
@@ -117,7 +120,7 @@ function NWCurrentPlayer(dbCurrentPlayer)
 		"deviceID": dbCurrentPlayer.deviceID, 
 		"imageURL": dbCurrentPlayer.imageURL
 	}
-	console.log("Preparing to return: " + JSON.stringify(returnVal));
+	console.log("... Found user: " + JSON.stringify(returnVal));
 	return returnVal;
 }
 
@@ -129,14 +132,17 @@ function NWValidateClientInSession(clientID, shouldBeInSession, nextHandler)
 
 		if (client == null)
 		{
+			console.log("Rejecting request: clientID does not exist");
 			return nextHandler(ERRInvalidClientID);
 		}
 		else if (shouldBeInSession == false && client.currentSession != null)
 		{
+			console.log("Rejecting request: the client is already in session with ID: " + client.currentSession);
 			return nextHandler(ERRClientAlreadyInSession);
 		}
 		else if (shouldBeInSession == true && client.currentSession == null)
 		{
+			console.log("Rejecting request: The client is not a member of a session");
 			return nextHandler(ERRClientNotMemberOfSession);
 		}
 
@@ -153,10 +159,11 @@ function NWValidateClientInSession(clientID, shouldBeInSession, nextHandler)
 function NWGameSessionQuery(clientID, dbGameSessionInstance, completionHandler) 
 {
 	var retVal = [-1, {}];
-
+	console.log("... Retrieving info about players in sessionID: " + dbGameSessionInstance.sessionID);
 	var dbCurrentPlayers = dbGameSessionInstance["currentPlayers"];
 	var index = -1;
 
+	console.log("... Retrieving info about players with IDs: " + JSON.stringify(dbCurrentPlayers));
 	var localCompletionHandler = function ()
 	{
 		retVal[0] = 200;
@@ -171,14 +178,11 @@ function NWGameSessionQuery(clientID, dbGameSessionInstance, completionHandler)
 	};
 
 	index = dbCurrentPlayers.indexOf(clientID);
-	console.log("ClientID: " + clientID + " index: " + index);
-
 	if (index < 0) return NWError(ERRClientNotMemberOfSession, res); 
 
 	// Remove the current client from the current players array
-	console.log("dbCurrentPlayers before splice: " + JSON.stringify(dbCurrentPlayers))
 	dbCurrentPlayers.splice(index, 1);
-	console.log("dbCurrentPlayers AFTER splice: " + JSON.stringify(dbCurrentPlayers))
+	
 	
 	globalNWCurrentPlayers = [];
 	// check if zero the client could be the only person in the game
@@ -188,12 +192,9 @@ function NWGameSessionQuery(clientID, dbGameSessionInstance, completionHandler)
 	// Each player needs a name, clientID, deviceID, and imageURL
 	dbCurrentPlayers.forEach(function(playerID)
 	{
-		console.log("Querying for player with id " + playerID)
 		db.users.findOne({clientID: parseInt(playerID,10)}, function (err, dbPlayer) 
 		{
 			if (err != null) return NWError(ERRUnknownServerError, res);
-
-			console.log("Found a player with that ID: " + JSON.stringify(dbPlayer));
 
 			// Get the right data from dbplayer and push it onto the array
 			globalNWCurrentPlayers.push(NWCurrentPlayer(dbPlayer))
@@ -220,7 +221,7 @@ function NWValidateClientID(clientID)
 {
 	if(clientID == null || isNaN(clientID) || clientID < 0 || clientID.toString().length > 10)
 	{
-		console.log("Error: clientID '" + clientID + "' does not satisfy requirements");
+		console.log("Rejecting clientID: '" + clientID + "', ID does not satisfy requirements");
 		return true;
 	}
 	return false;
@@ -230,7 +231,7 @@ function NWValidateSessionID(sessionID)
 {
 	if(sessionID == null || isNaN(sessionID) || sessionID < 0 || sessionID.toString().length > 5)
 	{
-		console.log("Error Invalid sessionID specified");
+		console.log("Rejecting sessionID: '" + sessionID + "', ID does not satisfy requirements");
 		return true;
 	}
 	return false;
@@ -271,7 +272,14 @@ var db = require("mongojs").connect(databaseUrl, collections);
 // Aproved for real on 4/10 at 10:05 Sam and Koki
 app.post(kGameServerEndpoints.login, function(req, res)
 {
-	console.log("Got a login!");
+	var userName = req.body.userName;
+	var deviceID = parseInt(req.body.deviceID, 10);
+	var clientID = parseInt(req.cookies.clientID, 10);
+	var shouldUpdateExistingUser = false;
+	
+	console.log(consoleDiv + "Received a login Request from user with clientID: " + clientID);
+	
+	
 	var completionHandler = function(redirectPath) 
 	{
 		console.log("Redirecting client to upload their profile");
@@ -279,21 +287,11 @@ app.post(kGameServerEndpoints.login, function(req, res)
 		//setLoginRedirectPath(redirectPath.toString());
 		res.redirect(302, redirectPath);
 	} 
-	
-	// begin validation before putting onto database
-	var userName = req.body.userName;
-	var deviceID = parseInt(req.body.deviceID, 10);
-	var clientID = parseInt(req.cookies.clientID, 10);
-	
-	var shouldUpdateExistingUser = false;
-	
-	//In postman change header Content-Type: application/json 
-	//in raw enter, {"userName": "koki", "deviceID": "2"}
 
 	// Find the user using their userName and deviceID 
 	if (userName == null || typeof userName == "undefined" || userName.length == 0 || userName.length > 20) 
 	{
-		console.log("Error: Username '" + userName + "' does not satisfy requirements");
+		console.log("Rejecting userName: '" + userName + "' name does not satisfy requirements");
 		return NWError(ERRInvalidPostParameter, res);
 	}
 	else if(deviceID == null || isNaN(deviceID) || deviceID < 0 || deviceID > 99)
@@ -302,8 +300,6 @@ app.post(kGameServerEndpoints.login, function(req, res)
 		
 		return NWError(ERRInvalidPostParameter, res);
 	}
-	
-	console.log("Checking if the user is in the database");
 	
 
 	// First: Check if user is already in database
@@ -315,7 +311,7 @@ app.post(kGameServerEndpoints.login, function(req, res)
 
 	var validateFunction = function ()
 	{	
-		console.log("Checking if clientID already exists on the server...")
+		console.log(" - Checking if clientID already exists on the server...")
 		// we want to allow a user to re-login
 		if (NWValidateClientID(clientID)) return firstFunction();
 		db.users.findOne({clientID: clientID}, function(err, user) 
@@ -336,7 +332,7 @@ app.post(kGameServerEndpoints.login, function(req, res)
 	// Query the database to check if a user with the requested name exists
 	firstFunction = function()
 	{
-		console.log("Checking if userName: '" + userName + "' already exists");
+		console.log(" - Checking if userName: '" + userName + "' is available...");
 		db.users.findOne({userName: userName}, function(err, user) 
 		{			
 			if (err != null) return NWError(ERRUnknownServerError, res);
@@ -350,7 +346,7 @@ app.post(kGameServerEndpoints.login, function(req, res)
 				}
 			}
 
-			console.log("Username is available");
+			console.log(" - Username is available");
 			// Get the count for users so we can create an unique clientID for the users
 			secondFunction();	
 		});	
@@ -361,7 +357,7 @@ app.post(kGameServerEndpoints.login, function(req, res)
 	//console.log("Cheking if the deviceID is in the database");
 	secondFunction = function()
 	{
-		console.log("Checking if deviceID: " + deviceID + " already exists");
+		console.log(" - Checking if deviceID: " + deviceID + " is available...");
 		db.users.findOne({deviceID: deviceID}, function(err, user) 
 		{			
 			if (err != null) return NWError(ERRUnknownServerError, res);
@@ -374,7 +370,7 @@ app.post(kGameServerEndpoints.login, function(req, res)
 					return NWError(ERRDeviceIDAlreadyTaken, res);
 				}
 			}
-			console.log("Device ID is available");
+			console.log(" - Device ID is available");
 
 			thirdFunction();	
 		});
@@ -414,7 +410,7 @@ app.post(kGameServerEndpoints.login, function(req, res)
 	// Update an existing user in the database
 	updateUserFunction = function(redirectPath)
 	{
-		console.log('Executing update of existing client: ' + clientID + " With new Name: '" + userName + "'' and deviceID: " + deviceID);
+		console.log('Executing update for client with ID: ' + clientID + " With new Name: '" + userName + "'' and deviceID: " + deviceID);
 		// First update the userName
 		db.users.update({clientID: clientID}, 
 					{$set:{userName: userName}}, 
@@ -467,6 +463,8 @@ app.post(kGameServerEndpoints.login, function(req, res)
 app.post(kGameServerEndpoints.images, function(req, res) 
 {
 	var clientID = parseInt(req.cookies.clientID, 10);
+	console.log(consoleDiv + "Received an image POST from client with ID: " + clientID);
+
 	if (NWValidateClientID(clientID)) return NWError(ERRInvalidClientID, res);
 
 	var completionHandler = function() 
@@ -489,6 +487,7 @@ app.post(kGameServerEndpoints.images, function(req, res)
 		var newPath = __dirname + "/images/" + imageName;
 
 		// Do the actual write the the images directory
+		console.log("Storing new image for client with ID: " + clientID)
 		fs.writeFile(newPath, data,function (err) 
 		{
 			if(err != null) return NWError(ERRUnknownServerError, res);
@@ -506,7 +505,7 @@ app.get(kGameServerEndpoints.images, function(req, res)
 	var clientID = 			parseInt(req.cookies.clientID, 10);
 	var requestedClientID = parseInt(req.params.clientID, 10);
 	
-	console.log("Got an image request from client: " + clientID + " for clientID: " + requestedClientID);
+	console.log(consoleDiv + "Received an image request from client: " + clientID + " for the image of client: " + requestedClientID);
 
 	// Validate: clientID, requestedClientID values
 	if (NWValidateClientID(clientID)) 			return NWError(ERRInvalidClientID, res);
@@ -540,6 +539,7 @@ app.get(kGameServerEndpoints.images, function(req, res)
 
 				if (user.currentSession != requestedUser.currentSession)
 				{
+					console.log("Rejecting request: client with ID: " + user.clientID + " is not a member of session: " + requestedUser.currentSession);
 					return NWError(ERRNotInSameSession, res);
 				}
 				return completionHandler();
@@ -555,7 +555,7 @@ app.get(kGameServerEndpoints.images, function(req, res)
 // Aproved for real on 4/11 at 12:15 Sam and koki Commit: 1ee640f8
 app.get(kGameServerEndpoints.gameSessions, function(req, res) 
 {
-	console.log("Got a game sessions query!");
+	console.log(consoleDiv + "Received a query for all game sessions");
 	
 	var clientID = parseInt(req.cookies.clientID, 10);
 	if (NWValidateClientID(clientID)) return NWError(ERRInvalidClientID, res);
@@ -589,13 +589,12 @@ app.get(kGameServerEndpoints.gameSessions, function(req, res)
 
 // Post to join game sessions
 // Approved for real on 4/11 at 3:46 Sam and koki Commit: 978edee2
-app.post(kGameServerEndpoints.joinSession, function(req, res) {
-
-	console.log("Got an attempt to join a session");
-
+app.post(kGameServerEndpoints.joinSession, function(req, res) 
+{
 	var clientID = parseInt(req.cookies.clientID, 10);
 	var sessionID = parseInt(req.body.sessionID, 10);	//is a number(int), pass to db as string
 	
+	console.log(consoleDiv + "Received attempt from client: '" + clientID + "' to join session with ID: '" + sessionID + "'");
 	if (NWValidateClientID(clientID)) 	return NWError(ERRInvalidClientID, res);
 	if (NWValidateSessionID(sessionID)) return NWError(ERRInvalidPostParameter, res);
 
@@ -618,7 +617,6 @@ app.post(kGameServerEndpoints.joinSession, function(req, res) {
 	//			Q3: Add the clientID to the players array
 	firstFunction = function (err)
 	{
-		console.log("Reached the first function err = " + err);
 		if (err != null) return NWError(err, res);
 
 		db.sessions.findOne({sessionID: sessionID}, function (err, session) 
@@ -681,15 +679,15 @@ app.post(kGameServerEndpoints.joinSession, function(req, res) {
 // Approved for real on 4/11 at 4:29 Sam and koki Commit: d3aae2f6
 app.post(kGameServerEndpoints.createSession, function(req, res)
 {
-	console.log("Got an attempt to create a session");
-
 	// Input Parameters: clientID, newSessionName
 	var clientID = parseInt(req.cookies.clientID, 10);
 	var newSessionName = req.body.newSessionName; 
 	
+	console.log(consoleDiv + "Got an attempt from client: '" + clientID + "' to create a session with name: '" + newSessionName + "'");
+
 	if (NWValidateClientID(clientID)) 	return NWError(ERRInvalidClientID, res);
 	
-	if (newSessionName == null || !(typeof newSessionName == 'string') || newSessionName.length == 0 || newSessionName.length > 15)
+	if (newSessionName == null || !(typeof newSessionName == 'string') || newSessionName.length == 0 || newSessionName.length > 30)
 	{
 		return NWError(ERRInvalidPostParameter, res);
 	}
@@ -715,8 +713,8 @@ app.post(kGameServerEndpoints.createSession, function(req, res)
 	// First: Check if a session with that name already exists
 	firstFunction = function (err)
 	{
-		console.log("Reached the first function err = " + err);
 		if (err != null) return NWError(err, res);
+		
 		db.sessions.findOne({sessionName: newSessionName}, function(err, sessions) 
 		{
 			//when session is not found
@@ -725,7 +723,7 @@ app.post(kGameServerEndpoints.createSession, function(req, res)
 				return NWError(ERRSessionExists, res);
 			}
 
-			console.log("Session not found \"" + newSessionName + "\", adding new session"); 
+			console.log("Session not found \"" + newSessionName + "\", Creating a new session"); 
 			secondFunction();
 		});
 			
@@ -748,14 +746,14 @@ app.post(kGameServerEndpoints.createSession, function(req, res)
 		db.sessions.save(newGameSession, function(err, saved) 
 		{
 			if (err != null || saved == null) return NWError(ERRUnknownServerError, res);
-			console.log("Session with name: '" + newSessionName + "' created");
-								
+			
+			console.log("Created New game session: " + JSON.stringify(newGameSession));
 			// Update the current session for the user 
 			db.users.update({clientID: clientID}, {$set:{currentSession: saved.sessionID}}, function(err, result) 
 			{
 				if (err != null) return NWError(ERRUnknownServerError, res);
 
-				console.log("Created New game session: " + JSON.stringify(newGameSession));
+				console.log("... Updating session info for client with ID: " + clientID);
 				return NWGameSessionQuery(clientID, newGameSession, completionHandler);
 
 			});
@@ -775,7 +773,7 @@ app.get(kGameServerEndpoints.getSesionWithID, function(req, res)
 	var clientID  = parseInt(req.cookies.clientID, 10);
 	var sessionID = parseInt(req.params.sessionID, 10);
 
-	console.log("Got a query for sessionID: " + sessionID);
+	console.log(consoleDiv + "Received a query for sessionID: " + sessionID + " from client with ID: " + clientID);
 
 	// Output: Sesion Info
 	var completionHandler = function (retVals)
@@ -803,7 +801,7 @@ app.get(kGameServerEndpoints.getSesionWithID, function(req, res)
 	// First: Query for session 
 	firstFunction = function (err)
 	{
-		console.log("Reached the first function err = " + err);
+		console.log("... Retrieving session data");
 		if (err != null) return NWError(err, res);
 		db.sessions.findOne({sessionID: sessionID}, function(err, session)
 		{
@@ -824,7 +822,7 @@ app.delete(kGameServerEndpoints.leaveSession, function(req, res)
 	// Input: Cookie clientID
 	var clientID  = parseInt(req.cookies.clientID, 10);
 
-	console.log("Got a request to leave a session from clientID: " + clientID);
+	console.log(consoleDiv + "Received request to leave a session from clientID: " + clientID);
 
 	if (NWValidateClientID(clientID)) 	return NWError(ERRInvalidClientID, res);
 	// Output: 200 OK
@@ -844,7 +842,6 @@ app.delete(kGameServerEndpoints.leaveSession, function(req, res)
 	
 	firstFunction = function (err)
 	{
-		console.log("Reached the first function err = " + err);
 		if (err != null) return NWError(err, res);
 
 		// Find the user with clientID
@@ -852,6 +849,7 @@ app.delete(kGameServerEndpoints.leaveSession, function(req, res)
 		{
 			if (err != null || user == null) return NWError(ERRUnknownServerError, res);
 
+			console.log("Removing Client from session: " + user.currentSession);
 			// Update the user's current session to null
 			db.users.update({clientID: clientID}, {$set:{currentSession: null}}, function (err, result)
 			{
@@ -861,24 +859,27 @@ app.delete(kGameServerEndpoints.leaveSession, function(req, res)
 				{
 					if (err != null || session == null) return NWError(ERRUnknownServerError, res);
 
-					if (session.numberOfPlayers == 1)
+					if (session.numberOfPlayers -1 == 0)
 					{
+						console.log("Session with name: '" + session.sesionName + "' is now empty; removing empty session");
 						db.sessions.remove({sessionID: session.sessionID});
 						return completionHandler();
 					}
 					// Update the session's current players array
-					db.sessions.update({sessionID: session.sessionID}, {$pull:{currentPlayers: clientID}}, function(err, innerResult)
+					console.log("... Updating the current players array for session: " + session.sessionID);
+					db.sessions.update({sessionID: session.sessionID}, 
+						{$pull:{currentPlayers: clientID}}, 
+						function(err, innerResult)
 					{
-						console.log("Updating the sessions current players array; err = " + err);
 						if (err != null || innerResult == null) return NWError(ERRUnknownServerError, res);
 
 						// Update the session's number of players
+						console.log("... Updating the number of players to: " + (session.numberOfPlayers - 1));
 						db.sessions.update({sessionID: session.sessionID}, 
 							{$set: {numberOfPlayers: session.numberOfPlayers-1}}, 
 							function(err, finalResult)
 						{
 							// this is the world record for nested function
-							console.log("Updating the sessions number of players err = " + err);
 							if (err != null || finalResult == null) return NWError(ERRUnknownServerError, res);
 							return completionHandler();
 						});
