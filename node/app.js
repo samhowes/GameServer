@@ -4,13 +4,14 @@
 
 var ERRUnknownServerError = 0;
 var ERRClientNotMemberOfSession = 1;
-var ERRUserNameOrDeviceAlreadyTaken = 2;
-var ERRInvalidPostParameter = 3;
-var ERRCookieIDMismatch = 4;
-var ERRSessionExists = 5;
-var ERRInvalidClientID = 6; 
-var ERRClientAlreadyInSession = 7;
-var ERRNotInSameSession = 8;
+var ERRUserNameAlreadyTaken = 2;
+var ERRDeviceIDAlreadyTaken = 3;
+var ERRInvalidPostParameter = 4;
+var ERRCookieIDMismatch 	= 5;
+var ERRSessionExists 		= 6;
+var ERRInvalidClientID 		= 7; 
+var ERRClientAlreadyInSession = 8;
+var ERRNotInSameSession 	= 9;
 
 var globalNWCurrentPlayers = null;
 
@@ -43,8 +44,13 @@ function NWError(code, res) {
 			statusCode = 401;
 			break;
 
-		case ERRUserNameOrDeviceAlreadyTaken:
-			description = "That username or deviceID is already taken on this server";
+		case ERRUserNameAlreadyTaken:
+			description = "That username is already taken on this server";
+			statusCode = 401;
+			break;
+
+		case ERRDeviceIDAlreadyTaken:
+			description = "That deviceID is already taken on this server";
 			statusCode = 401;
 			break;
 
@@ -266,10 +272,10 @@ var db = require("mongojs").connect(databaseUrl, collections);
 app.post(kGameServerEndpoints.login, function(req, res)
 {
 	console.log("Got a login!");
-	var completionHandler = function(numberOfClients, redirectPath) 
+	var completionHandler = function(redirectPath) 
 	{
-		//setting the cookie
-		res.cookie('clientID', numberOfClients);
+		console.log("Redirecting client to upload their profile");
+		
 		//setLoginRedirectPath(redirectPath.toString());
 		res.redirect(302, redirectPath);
 	} 
@@ -279,7 +285,7 @@ app.post(kGameServerEndpoints.login, function(req, res)
 	var deviceID = parseInt(req.body.deviceID, 10);
 	var clientID = parseInt(req.cookies.clientID, 10);
 	
-	
+	var shouldUpdateExistingUser = false;
 	
 	//In postman change header Content-Type: application/json 
 	//in raw enter, {"userName": "koki", "deviceID": "2"}
@@ -304,41 +310,50 @@ app.post(kGameServerEndpoints.login, function(req, res)
 	var firstFunction;
 	var secondFunction;
 	var thirdFunction;
-	var fourthFunction;
+	var updateUserFunction;
+	var createUserFunction;
 
+	var validateFunction = function ()
+	{	
+		console.log("Checking if clientID already exists on the server...")
+		// we want to allow a user to re-login
+		if (NWValidateClientID(clientID)) return firstFunction();
+		db.users.findOne({clientID: clientID}, function(err, user) 
+		{			
+			if (err != null) return NWError(ERRUnknownServerError, res);
+			// If the user somehow has an invalid cookie, log them in with a new cookie
+			if (user != null)
+			{
+				console.log("ID " + clientID + " Exists: allowing update of userName and DeviceID");
+				shouldUpdateExistingUser = true;
+			}
+
+			return firstFunction();
+
+		});
+	}
+
+	// Query the database to check if a user with the requested name exists
 	firstFunction = function()
 	{
+		console.log("Checking if userName: '" + userName + "' already exists");
 		db.users.findOne({userName: userName}, function(err, user) 
 		{			
-			// We didn't find a user, so add a new one
-			//console.log("First: Users found: '" + users + "'");
-			console.log("First: Users found: '" + user + "'");
-
 			if (err != null) return NWError(ERRUnknownServerError, res);
 
 			if (user != null)
 			{ 
-				if (NWValidateClientID(clientID) == false && clientID == user.clientID) 
+				if (!shouldUpdateExistingUser || (shouldUpdateExistingUser && user.clientID != clientID))
 				{
-					console.log("Updating deviceID for user to: " + deviceID);
-					db.users.update({clientID: clientID}, 
-						{$set:{deviceID: deviceID}}, function(err, result) 
-					{
-						if (err) return NWError(ERRUnknownServerError, res);
-					});
-					return completionHandler(clientID, user.imageURL);
+					console.log("Rejecting request: A user with that name already exists.");	
+					return NWError(ERRUserNameAlreadyTaken, res);
 				}
-
-				console.log("returning global errror");	
-				return NWError(ERRUserNameOrDeviceAlreadyTaken, res);
 			}
 
-			
-			
-			console.log("User not found \"" + userName + "\", adding user");
+			console.log("Username is available");
 			// Get the count for users so we can create an unique clientID for the users
 			secondFunction();	
-		});	// END: Check if the user is already in the database
+		});	
 	}
 
 
@@ -346,20 +361,41 @@ app.post(kGameServerEndpoints.login, function(req, res)
 	//console.log("Cheking if the deviceID is in the database");
 	secondFunction = function()
 	{
-		db.users.count({deviceID: deviceID}, function(err, numberOfDeviceID) 
-		{	
-			console.log("Count of Device IDs is: " + numberOfDeviceID.toString());
-			if (numberOfDeviceID != 0)
-			{   
-				console.log("error, deviceID already taken");
-				return NWError(ERRUserNameOrDeviceAlreadyTaken, res);
+		console.log("Checking if deviceID: " + deviceID + " already exists");
+		db.users.findOne({deviceID: deviceID}, function(err, user) 
+		{			
+			if (err != null) return NWError(ERRUnknownServerError, res);
+
+			if (user != null)
+			{ 
+				if (!shouldUpdateExistingUser || (shouldUpdateExistingUser && user.clientID != clientID))
+				{	
+					console.log("Rejecting request: A user with that deviceID already exists.");	
+					return NWError(ERRDeviceIDAlreadyTaken, res);
+				}
 			}
-			thirdFunction();
+			console.log("Device ID is available");
+
+			thirdFunction();	
 		});
 	}	
 
-	// Third: Count the number of clients so we can create a new unique clientID
+	// Multiplex to the completion of the request
 	thirdFunction = function()
+	{
+		if (shouldUpdateExistingUser)
+		{
+			var redirectPath = kGameServerEndpoints.images.replace(":clientID", clientID.toString());
+			return updateUserFunction(redirectPath);
+		}
+		else
+		{	
+			return fourthFunction();
+		}
+	}
+
+	// Fourth: Count the number of clients so we can create a new unique clientID
+	fourthFunction = function()
 	{
 		db.users.count(function (err, numberOfClients) 
 		{
@@ -367,22 +403,44 @@ app.post(kGameServerEndpoints.login, function(req, res)
 			{
 				return NWError(ERRUnknownServerError, res);
 			}
-			console.log("Number of clients found at 3: '" + numberOfClients + "'");
-			//setglobalLoginInfo.numberOfClients(numberOfClients);
+			console.log("New Client's ID will be: '" + numberOfClients + "'");
+		
 			// Redirect path for the user to post their profile image
-			
-			redirectPath = kGameServerEndpoints.images.replace(":clientID", numberOfClients.toString());
-			fourthFunction(numberOfClients, redirectPath);
+			var redirectPath = kGameServerEndpoints.images.replace(":clientID", numberOfClients.toString());
+			createUserFunction(numberOfClients, redirectPath);
 		});
 	}
 
-	// Third: Save the user to the database
-	fourthFunction = function (numberOfClients, redirectPath)
+	// Update an existing user in the database
+	updateUserFunction = function(redirectPath)
 	{
+		console.log('Executing update of existing client: ' + clientID + " With new Name: '" + userName + "'' and deviceID: " + deviceID);
+		// First update the userName
+		db.users.update({clientID: clientID}, 
+					{$set:{userName: userName}}, 
+					function(err, result) 
+		{			
+			if (err != null || result == null) return NWError(ERRUnknownServerError, res);
+
+			// Second update the device ID
+			db.users.update({clientID: clientID}, 
+						{$set:{deviceID: deviceID}}, function(err, result) 
+			{
+				if (err != null) return NWError(ERRUnknownServerError, res);
+
+				return completionHandler(redirectPath);
+			});
+		});
+	}
+
+	// Add a new user to the database
+	createUserFunction = function (newClientID, redirectPath)
+	{
+		console.log('Executing creation of new client:' + newClientID + " With name: '" + userName + "' and deviceID: " + deviceID);
 		db.users.save(
 					{	userName: userName, 
 						deviceID: deviceID, 
-						clientID: numberOfClients, 
+						clientID: newClientID, 
 						hasCompletedLogin: false, 
 						imageURL: redirectPath, 
 						currentSession: null,
@@ -391,17 +449,16 @@ app.post(kGameServerEndpoints.login, function(req, res)
 		{	
 			if( err || !saved ) 
 			{
-				console.log("User not saved");
 				return NWError(ERRUnknownServerError, res);
 			}
 			
-			console.log("User saved" + " \"" + userName + "\"");								
-			completionHandler(numberOfClients, redirectPath);
+			res.cookie('clientID', newClientID);				
+			completionHandler(redirectPath);
 
 		});
 	}
 
-	firstFunction();
+	validateFunction();
 	
 });
 
